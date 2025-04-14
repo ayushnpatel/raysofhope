@@ -3,7 +3,7 @@ import os
 import sys
 from dataclasses import dataclass, fields, field
 from datetime import datetime
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Union
 
 import pandas as pd
 
@@ -68,6 +68,59 @@ class BillingData:
         }
         # Get fields excluding the internally calculated 'approval_start_date'
         return [expected_map[f.name] for f in fields(cls) if f.init]
+
+
+def _parse_and_format_birth_date(date_input: Union[str, datetime, None]) -> str:
+    """Attempts to parse a date string or datetime object from various formats
+    and returns it consistently formatted as mm/dd/yyyy.
+
+    Handles common Excel/pandas formats like datetime objects, mm/dd/yyyy, mm/dd/yy.
+
+    Args:
+        date_input: The date string, datetime object, or None to parse.
+
+    Returns:
+        The date string formatted as mm/dd/yyyy, or an empty string
+        if input is None or parsing fails.
+    """
+    if date_input is None:
+        return ""
+
+    parsed_date: Optional[datetime] = None
+
+    if isinstance(date_input, datetime):
+        parsed_date = date_input
+    elif isinstance(date_input, str):
+        date_str = date_input.strip()
+        if not date_str:
+            return ""
+        # Add more formats if needed, prioritize expected ones
+        formats_to_try = ["%m/%d/%Y", "%m/%d/%y", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d"]
+        for fmt in formats_to_try:
+            try:
+                parsed_date = datetime.strptime(date_str, fmt)
+                break # Success
+            except ValueError:
+                continue # Try the next format
+    else:
+        # Handle other potential types if necessary, like pd.Timestamp
+        try:
+            # Attempt conversion if it's something convertible like pd.Timestamp
+            parsed_date = pd.to_datetime(date_input).to_pydatetime()
+        except Exception:
+             logger.warning(f"Could not handle birth date input type '{type(date_input)}': {date_input}. Returning empty string.")
+             return ""
+
+
+    if parsed_date:
+        return parsed_date.strftime("%m/%d/%Y")
+    else:
+        # Log warning only if it was a string we failed to parse
+        if isinstance(date_input, str):
+            logger.warning(f"Could not parse birth date string '{date_input}' using known formats. Returning empty string.")
+        elif not isinstance(date_input, datetime): # Avoid logging if it was already a datetime
+             logger.warning(f"Failed to parse birth date input: {date_input}. Returning empty string.")
+        return ""
 
 
 def _find_excel_file(file_path_arg: Optional[str]) -> str:
@@ -177,10 +230,15 @@ def parse_excel_step(file_path_arg: Optional[str] = None) -> List[BillingData]:
                     continue
 
                 # --- Start creating BillingData ---
+                # Parse and format birth date
+                # Pass the raw value from the row directly
+                raw_birth_date_input = row.get("PATIENT'S BIRTH DATE")
+                formatted_birth_date = _parse_and_format_birth_date(raw_birth_date_input)
+
                 data = BillingData(
                     patient_last_name=patient_last_name,
                     patient_first_name=patient_first_name,
-                    patient_birth_date=str(row.get("PATIENT'S BIRTH DATE", "")),
+                    patient_birth_date=formatted_birth_date, # Use formatted date
                     insured_id=str(row.get("INSURED'S I.D. #", "")),
                     diagnosis_code=str(row.get("DIAGNOSIS CODE", "")),
                     prior_auth_num=str(row.get("PRIOR AUTH #")) if pd.notna(row.get("PRIOR AUTH #")) else None,

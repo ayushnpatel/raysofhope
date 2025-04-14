@@ -1,9 +1,10 @@
 import logging
 import sys
 import asyncio # Added for async operations
-import datetime # Added for date calculations
+from datetime import datetime, date, timedelta # Corrected import
 from typing import TYPE_CHECKING, List, Dict, Any, Optional
 from steps.parse_excel import BillingData
+import string # Add import
 
 # Switch to async API
 if TYPE_CHECKING:
@@ -39,7 +40,13 @@ async def _fill_patient_info(page: 'Page', billing_datum: BillingData, index: in
     logger.info(f"Tab {index}: Filling patient information...")
     await _fill_field(page, "#ddeclm1500_txtPatientLastName", billing_datum.patient_last_name, "Patient Last Name", index)
     await _fill_field(page, "#ddeclm1500_txtPatientFirstName", billing_datum.patient_first_name, "Patient First Name", index)
-    await _fill_field(page, "#ddeclm1500_txtPatientDOB", billing_datum.patient_birth_date, "Patient DOB", index)
+
+    # Patient birth date is pre-formatted by _parse_and_format_birth_date in parse_excel.py
+    formatted_dob = billing_datum.patient_birth_date
+    if not formatted_dob:
+        logger.debug(f"Tab {index}: Patient birth date is empty or could not be parsed. Skipping DOB field.")
+
+    await _fill_field(page, "#ddeclm1500_txtPatientDOB", formatted_dob, "Patient DOB", index)
     await _fill_field(page, "#ddeclm1500_txtInsuredIdNumber", billing_datum.insured_id, "Insured ID", index)
     await _fill_field(page, "#ddeclm1500_txtPatientAccount", billing_datum.insured_id, "Patient Account", index) # Re-using insured ID
 
@@ -55,7 +62,11 @@ async def _fill_diagnosis_codes(page: 'Page', billing_datum: BillingData, index:
     """Fills the diagnosis code fields."""
     logger.info(f"Tab {index}: Filling diagnosis codes...")
     diag_codes_str = billing_datum.diagnosis_code or ''
-    diag_codes = diag_codes_str.split()
+    # Remove punctuation and quotes
+    cleaned_diag_codes_str = diag_codes_str.translate(str.maketrans('', '', string.punctuation)).replace('"', '').replace("'", "")
+    diag_codes = cleaned_diag_codes_str.split()
+    logger.debug(f"Tab {index}: Original diagnosis string: '{diag_codes_str}'")
+    logger.debug(f"Tab {index}: Cleaned diagnosis string: '{cleaned_diag_codes_str}'")
     logger.debug(f"Tab {index}: Found diagnosis codes: {diag_codes}")
 
     for i, code in enumerate(diag_codes):
@@ -125,7 +136,7 @@ async def _fill_charges_and_units(page: 'Page', billing_datum: BillingData, inde
     """Fills the total charges and units fields."""
     logger.info(f"Tab {index}: Filling charges and units...")
     # Use Optional[float] for dollars and Optional[int] for units to handle potential None
-    charge_value = str(billing_datum.dollars) if billing_datum.dollars is not None else None
+    charge_value = f"{billing_datum.dollars:.2f}" if billing_datum.dollars is not None else None
     units_value = str(billing_datum.units) if billing_datum.units is not None else None
 
     await _fill_field(page, "#ddeclm1500_txtCharges01", charge_value, "Charges (Box 24F)", index)
@@ -190,10 +201,10 @@ async def _open_and_navigate_cms_tab(context: 'BrowserContext', target_url: str,
         logger.info(f"Tab {index}: Starting form filling process...")
 
         # Date Calculations (Needed by multiple helpers)
-        today = datetime.date.today()
+        today = date.today() # Use date directly
         days_since_monday = today.weekday() # Monday is 0, Sunday is 6
-        last_monday = today - datetime.timedelta(days=days_since_monday + 7)
-        last_friday = last_monday + datetime.timedelta(days=4)
+        last_monday = today - timedelta(days=days_since_monday + 7) # Use timedelta directly
+        last_friday = last_monday + timedelta(days=4) # Use timedelta directly
         from_date_str = last_monday.strftime('%m/%d/%y')
         to_date_str = last_friday.strftime('%m/%d/%y')
         today_date_str = today.strftime('%m/%d/%y')
